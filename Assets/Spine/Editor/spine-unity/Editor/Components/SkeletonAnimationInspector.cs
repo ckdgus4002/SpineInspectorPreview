@@ -27,9 +27,11 @@
  * THE SPINE RUNTIMES, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *****************************************************************************/
 
+using System;
 using UnityEditor;
 using UnityEngine;
 using Spine;
+using Object = UnityEngine.Object;
 
 namespace Spine.Unity.Editor {
 
@@ -42,12 +44,58 @@ namespace Spine.Unity.Editor {
 		readonly GUIContent LoopLabel = new GUIContent("Loop", "Whether or not .AnimationName should loop. This only applies to the initial animation specified in the inspector, or any subsequent Animations played through .AnimationName. Animations set through state.SetAnimation are unaffected.");
 		readonly GUIContent TimeScaleLabel = new GUIContent("Time Scale", "The rate at which animations progress over time. 1 means normal speed. 0.5 means 50% speed.");
 
+		readonly SkeletonInspectorPreview preview = new SkeletonInspectorPreview();
+
+		SkeletonAnimation thisSkeletonAnimation => (SkeletonAnimation)target;
+
 		protected override void OnEnable () {
 			base.OnEnable();
 			animationName = serializedObject.FindProperty("_animationName");
 			loop = serializedObject.FindProperty("loop");
 			timeScale = serializedObject.FindProperty("timeScale");
+			
+			// This handles the case where the managed editor assembly is unloaded before recompilation when code changes.
+			AppDomain.CurrentDomain.DomainUnload -= OnDomainUnload;
+			AppDomain.CurrentDomain.DomainUnload += OnDomainUnload;
+			
+			EditorApplication.update -= preview.HandleEditorUpdate;
+			EditorApplication.update += preview.HandleEditorUpdate;
+			
+			preview.Initialize(this.Repaint, thisSkeletonAnimation.skeletonDataAsset, "default");
 		}
+		
+		void OnDestroy () {
+			HandleOnDestroyPreview();
+			AppDomain.CurrentDomain.DomainUnload -= OnDomainUnload;
+			EditorApplication.update -= preview.HandleEditorUpdate;
+		}
+		
+		private void OnDomainUnload (object sender, EventArgs e) {
+			OnDestroy();
+		}
+
+		void Clear () {
+			preview.Clear();
+		}
+		
+		// public override void OnInspectorGUI()
+		// {
+		// 	// Main Serialized Fields
+		// 	using (var changeCheck = new EditorGUI.ChangeCheckScope()) {
+		// 		using (new SpineInspectorUtility.BoxScope())
+		//
+		// 		if (changeCheck.changed) {
+		// 			if (serializedObject.ApplyModifiedProperties()) {
+		// 				this.Clear();
+		// 				
+		// 				return;
+		// 			}
+		// 		}
+		// 	}
+		// 	
+		// 	// Unity Quirk: Some code depends on valid preview. If preview is initialized elsewhere, this can cause contents to change between Layout and Repaint events, causing GUILayout control count errors.
+		// 	preview.Initialize(this.Repaint, thisSkeletonAnimation.skeletonDataAsset, "default");
+		// }
 
 		protected override void DrawInspectorGUI (bool multi) {
 			base.DrawInspectorGUI(multi);
@@ -135,5 +183,35 @@ namespace Spine.Unity.Editor {
 				}
 			}
 		}
+		
+		#region Preview Handlers
+		void HandleOnDestroyPreview () {
+			EditorApplication.update -= preview.HandleEditorUpdate;
+			preview.OnDestroy();
+		}
+
+		override public bool HasPreviewGUI () {
+			if (serializedObject.isEditingMultipleObjects) 
+				return false;
+
+			// for (int i = 0; i < atlasAssets.arraySize; i++) {
+			// 	var prop = atlasAssets.GetArrayElementAtIndex(i);
+			// 	if (prop.objectReferenceValue == null)
+			// 		return false;
+			// }
+
+			// return skeletonJSON.objectReferenceValue != null;
+			return true;
+		}
+
+		override public void OnInteractivePreviewGUI (Rect r, GUIStyle background) {
+			preview.Initialize(this.Repaint, thisSkeletonAnimation.skeletonDataAsset, "default");
+			preview.HandleInteractivePreviewGUI(r, background);
+		}
+
+		override public GUIContent GetPreviewTitle () { return SpineInspectorUtility.TempContent("Preview"); }
+		public override void OnPreviewSettings () { preview.HandleDrawSettings(); }
+		public override Texture2D RenderStaticPreview (string assetPath, Object[] subAssets, int width, int height) { return preview.GetStaticPreview(width, height); }
+		#endregion
 	}
 }

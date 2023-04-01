@@ -31,8 +31,10 @@
 #define NEW_PREFAB_SYSTEM
 #endif
 
+using System;
 using UnityEngine;
 using UnityEditor;
+using Object = UnityEngine.Object;
 
 namespace Spine.Unity.Editor {
 	using Icons = SpineEditorUtilities.Icons;
@@ -78,6 +80,8 @@ namespace Spine.Unity.Editor {
 			}
 		}
 
+		readonly SkeletonInspectorPreview preview = new SkeletonInspectorPreview();
+
 		void OnEnable () {
 #if NEW_PREFAB_SYSTEM
 			isInspectingPrefab = false;
@@ -121,6 +125,29 @@ namespace Spine.Unity.Editor {
 
 			separatorSlotNames = so.FindProperty("separatorSlotNames");
 			separatorSlotNames.isExpanded = true;
+			
+			// This handles the case where the managed editor assembly is unloaded before recompilation when code changes.
+			AppDomain.CurrentDomain.DomainUnload -= OnDomainUnload;
+			AppDomain.CurrentDomain.DomainUnload += OnDomainUnload;
+			
+			EditorApplication.update -= preview.HandleEditorUpdate;
+			EditorApplication.update += preview.HandleEditorUpdate;
+			
+			preview.Initialize(this.Repaint, thisSkeletonGraphic.skeletonDataAsset, "default");
+		}
+		
+		void OnDestroy () {
+			HandleOnDestroyPreview();
+			AppDomain.CurrentDomain.DomainUnload -= OnDomainUnload;
+			EditorApplication.update -= preview.HandleEditorUpdate;
+		}
+		
+		private void OnDomainUnload (object sender, EventArgs e) {
+			OnDestroy();
+		}
+		
+		void Clear () {
+			preview.Clear();
 		}
 
 		public override void OnInspectorGUI () {
@@ -271,7 +298,7 @@ namespace Spine.Unity.Editor {
 			wasChanged |= EditorGUI.EndChangeCheck();
 
 			if (wasChanged) {
-				serializedObject.ApplyModifiedProperties();
+				if (serializedObject.ApplyModifiedProperties()) this.Clear();
 				slotsReapplyRequired = true;
 			}
 
@@ -284,6 +311,9 @@ namespace Spine.Unity.Editor {
 				}
 				slotsReapplyRequired = false;
 			}
+			
+			// Unity Quirk: Some code depends on valid preview. If preview is initialized elsewhere, this can cause contents to change between Layout and Repaint events, causing GUILayout control count errors.
+			preview.Initialize(this.Repaint, thisSkeletonGraphic.skeletonDataAsset, "default");
 		}
 
 		protected bool SkeletonHasMultipleSubmeshes () {
@@ -346,6 +376,36 @@ namespace Spine.Unity.Editor {
 			}
 		}
 
+		#region Preview Handlers
+		void HandleOnDestroyPreview () {
+			EditorApplication.update -= preview.HandleEditorUpdate;
+			preview.OnDestroy();
+		}
+
+		override public bool HasPreviewGUI () {
+			if (serializedObject.isEditingMultipleObjects)
+				return false;
+
+			// for (int i = 0; i < atlasAssets.arraySize; i++) {
+			// 	var prop = atlasAssets.GetArrayElementAtIndex(i);
+			// 	if (prop.objectReferenceValue == null)
+			// 		return false;
+			// }
+
+			// return skeletonJSON.objectReferenceValue != null;
+			return true;
+		}
+
+		override public void OnInteractivePreviewGUI (Rect r, GUIStyle background) {
+			preview.Initialize(this.Repaint, thisSkeletonGraphic.skeletonDataAsset, "default");
+			preview.HandleInteractivePreviewGUI(r, background);
+		}
+
+		override public GUIContent GetPreviewTitle () { return SpineInspectorUtility.TempContent("Preview"); }
+		public override void OnPreviewSettings () { preview.HandleDrawSettings(); }
+		public override Texture2D RenderStaticPreview (string assetPath, Object[] subAssets, int width, int height) { return preview.GetStaticPreview(width, height); }
+		#endregion
+		
 		#region Menus
 		[MenuItem("CONTEXT/SkeletonGraphic/Match RectTransform with Mesh Bounds")]
 		static void MatchRectTransformWithBounds (MenuCommand command) {

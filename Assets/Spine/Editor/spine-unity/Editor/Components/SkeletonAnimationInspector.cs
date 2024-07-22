@@ -27,9 +27,10 @@
  * SPINE RUNTIMES, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *****************************************************************************/
 
-using Spine;
+using System;
 using UnityEditor;
 using UnityEngine;
+using Object = UnityEngine.Object;
 
 namespace Spine.Unity.Editor {
 
@@ -45,12 +46,40 @@ namespace Spine.Unity.Editor {
 				"running animations independent of e.g. game pause (Time.timeScale). " +
 				"Instance SkeletonAnimation.timeScale will still be applied.");
 
+		readonly SkeletonInspectorPreview preview = new();
+		
+		SkeletonAnimation thisSkeletonAnimation => (SkeletonAnimation)target;
+		
 		protected override void OnEnable () {
 			base.OnEnable();
 			animationName = serializedObject.FindProperty("_animationName");
 			loop = serializedObject.FindProperty("loop");
 			timeScale = serializedObject.FindProperty("timeScale");
 			unscaledTime = serializedObject.FindProperty("unscaledTime");
+			
+			
+			// This handles the case where the managed editor assembly is unloaded before recompilation when code changes.
+			AppDomain.CurrentDomain.DomainUnload -= OnDomainUnload;
+			AppDomain.CurrentDomain.DomainUnload += OnDomainUnload;
+
+			EditorApplication.update -= preview.HandleEditorUpdate;
+			EditorApplication.update += preview.HandleEditorUpdate;
+
+			preview.Initialize(this.Repaint, thisSkeletonAnimation.skeletonDataAsset, "default");
+		}
+		
+		void OnDestroy () {
+			HandleOnDestroyPreview();
+			AppDomain.CurrentDomain.DomainUnload -= OnDomainUnload;
+			EditorApplication.update -= preview.HandleEditorUpdate;
+		}
+
+		private void OnDomainUnload (object sender, EventArgs e) {
+			OnDestroy();
+		}
+		
+		void Clear () {
+			preview.Clear();
 		}
 
 		protected override void DrawInspectorGUI (bool multi) {
@@ -58,7 +87,7 @@ namespace Spine.Unity.Editor {
 			if (!TargetIsValid) return;
 			bool sameData = SpineInspectorUtility.TargetsUseSameData(serializedObject);
 
-			foreach (UnityEngine.Object o in targets)
+			foreach (Object o in targets)
 				TrySetAnimation(o as SkeletonAnimation);
 
 			EditorGUILayout.Space();
@@ -74,7 +103,7 @@ namespace Spine.Unity.Editor {
 			EditorGUILayout.PropertyField(loop, LoopLabel);
 			wasAnimationParameterChanged |= EditorGUI.EndChangeCheck(); // Value used in the next update.
 			EditorGUILayout.PropertyField(timeScale, TimeScaleLabel);
-			foreach (UnityEngine.Object o in targets) {
+			foreach (Object o in targets) {
 				SkeletonAnimation component = o as SkeletonAnimation;
 				component.timeScale = Mathf.Max(component.timeScale, 0);
 			}
@@ -107,7 +136,7 @@ namespace Spine.Unity.Editor {
 						skeleton.SetToSetupPose();
 					}
 
-					Spine.Animation animationToUse = skeleton.Data.FindAnimation(animationName.stringValue);
+					Animation animationToUse = skeleton.Data.FindAnimation(animationName.stringValue);
 
 					if (!Application.isPlaying) {
 						if (animationToUse != null) {
@@ -133,5 +162,35 @@ namespace Spine.Unity.Editor {
 				}
 			}
 		}
+		
+		#region Preview Handlers
+		void HandleOnDestroyPreview () {
+			EditorApplication.update -= preview.HandleEditorUpdate;
+			preview.OnDestroy();
+		}
+
+		override public bool HasPreviewGUI () {
+			if (serializedObject.isEditingMultipleObjects) 
+				return false;
+
+			// for (int i = 0; i < atlasAssets.arraySize; i++) {
+			// 	var prop = atlasAssets.GetArrayElementAtIndex(i);
+			// 	if (prop.objectReferenceValue == null)
+			// 		return false;
+			// }
+
+			// return skeletonJSON.objectReferenceValue != null;
+			return true;
+		}
+
+		override public void OnInteractivePreviewGUI (Rect r, GUIStyle background) {
+			preview.Initialize(this.Repaint, thisSkeletonAnimation.skeletonDataAsset, "default");
+			preview.HandleInteractivePreviewGUI(r, background);
+		}
+
+		override public GUIContent GetPreviewTitle () { return SpineInspectorUtility.TempContent("Preview"); }
+		public override void OnPreviewSettings () { preview.HandleDrawSettings(); }
+		public override Texture2D RenderStaticPreview (string assetPath, Object[] subAssets, int width, int height) { return preview.GetStaticPreview(width, height); }
+		#endregion
 	}
 }
